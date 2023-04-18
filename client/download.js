@@ -1,7 +1,111 @@
-const net = require('net')
-const torrent_utils = require('./torrent_utils')
+const net = require('net');
+const fs = require('fs');
 
-function download(peer, torrent, file, pieces) {
-    socket = new net.Socket();
+const tracker = require('./tracker');
+const message = require('./message');
+const torrent_utils = require('./torrent_utils');
+const Pieces = require('./Pieces');
+const Queue = require('./Queue');
 
+module.exports = (torrent, path) => {
+    tracker.getPeers(torrent, peers => {
+        const pieces = new Pieces(torrent);
+        const file = fs.openSync(path, 'w');
+        peers.forEach(peer => download(peer, torrent, pieces, file));
+    });
+};
+
+function download(peer, torrent, pieces, file) {
+    const socket = new net.Socket();
+    socket.on('error', console.log);
+    socket.connect(peer.port, peer.ip, () => {
+        socket.write(message.buildHandshake(torrent));
+    });
+    const queue = new Queue(torrent);
+    onMsg(socket, msg => handle_msg(msg, socket, pieces, queue, torrent, file));
+}
+
+function onMsg(socket, callback) {
+    let savedBuf = Buffer.alloc(0);
+    let handshake = true;
+
+    socket.on('data', recvBuf => {
+        // msgLen calculates the length of a whole message
+        const msgLen = () => handshake ? savedBuf.readUInt8(0) + 49 : savedBuf.readInt32BE(0) + 4;
+        savedBuf = Buffer.concat([savedBuf, recvBuf]);
+
+        while (savedBuf.length >= 4 && savedBuf.length >= msgLen()) {
+            callback(savedBuf.slice(0, msgLen()));
+            savedBuf = savedBuf.slice(msgLen());
+            handshake = false;
+        }
+    });
+}
+
+
+
+
+function handle_msg(msg, socket, pieces, queue, torrent, file) {
+    if (msg.length === msg.readUInt8(0) + 49 && msg.toString('utf8', 1, 20) === 'BitTorrent protocol') {
+        socket.write(message.buildInterested());
+    } else {
+        const m = message.parse(msg);
+
+        if (m.id === 0) socket.end(); // choke
+        if (m.id === 1) { queue.choked = false; requestPiece(socket, pieces, queue); } // unchoke
+        if (m.id === 4) // have Handler
+        {
+            const pieceIndex = m.payload.readUInt32BE(0);
+            const queueEmpty = queue.length === 0;
+            queue.queue(pieceIndex);
+            if (queueEmpty) requestPiece(socket, pieces, queue);
+        }
+        if (m.id === 5) handleBitfield(socket, pieces, queue, m.payload);
+        if (m.id === 7) handlePiece(socket, pieces, queue, torrent, file, m.payload);
+    }
+}
+
+
+function handleBitfield(socket, pieces, queue, payload) {
+    const queueEmpty = queue.length === 0;
+    payload.forEach((byte, i) => {
+        for (let j = 0; j < 8; j++) {
+            if (byte % 2) queue.queue(i * 8 + 7 - j);
+            byte = Math.floor(byte / 2);
+        }
+    });
+    if (queueEmpty) requestPiece(socket, pieces, queue);
+}
+
+function handlePiece(socket, pieces, queue, torrent, file, pieceResp) {
+    pieces.printPercentDone();
+
+    pieces.addReceived(pieceResp);
+
+    const offset = pieceResp.index * torrent.info['piece length'] + pieceResp.begin;
+    fs.write(file, pieceResp.block, 0, pieceResp.block.length, offset, () => { });
+
+    if (pieces.isDone()) {
+        console.log('DONE!');
+        socket.end();
+        try { fs.closeSync(file); } catch (e) { }
+    } else {
+        requestPiece(socket, pieces, queue);
+    }
+}
+
+function requestPiece(socket, pieces, queue) {
+    if (!queue.choked)
+        while (queue.length()) {
+            const pieceBlock = queue.deque();
+            if (pieces.needed(pieceBlock)) {
+                socket.write(message.buildRequest(pieceBlock));
+                pieces.addRequested(pieceBlock);
+                
+                break;
+            }
+        }
+
+    else
+        return null;
 }
