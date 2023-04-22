@@ -9,28 +9,34 @@ const Queue = require("./Queue");
 
 function download(peer, torrent, pieces, file) {
   const socket = new net.Socket();
+  const queue = new Queue();
+
   socket.on("error", console.log);
   socket.connect(peer.port, peer.ip, () => {
     socket.write(message.buildHandshake(torrent));
   });
-  const queue = new Queue(torrent);
+
+  queue.queue(torrent);
   onMsg(socket, (msg) => handle_msg(msg, socket, pieces, queue, torrent, file));
 }
 
-function onMsg(socket, callback) {
+
+onMsg = (socket, callback) => {
   let savedBuf = Buffer.alloc(0);
   let handshake = true;
 
   socket.on("data", (recvBuf) => {
-    // msgLen calculates the length of a whole message
-    const msgLen = () =>
-      handshake ? savedBuf.readUInt8(0) + 49 : savedBuf.readInt32BE(0) + 4;
     savedBuf = Buffer.concat([savedBuf, recvBuf]);
+    
+    const msgLen = () => {
+      if (handshake) return savedBuf.readUInt8(0) + 49;
+      return savedBuf.readInt32BE(0) + 4;
+    }
 
     while (savedBuf.length >= 4 && savedBuf.length >= msgLen()) {
       callback(savedBuf.slice(0, msgLen()));
-      savedBuf = savedBuf.slice(msgLen());
       handshake = false;
+      savedBuf = savedBuf.slice(msgLen());
     }
   });
 }
@@ -59,12 +65,13 @@ function handle_msg(msg, socket, pieces, queue, torrent, file) {
     // if (m.id === 5) handleBitfield(socket, pieces, queue, m.payload);
     if (m.id === 5) {
       const queueEmpty = queue.length === 0;
-      m.payload.forEach((byte, i) => {
+      for (let i = 0; i < m.payload.length; i++) {
+        const byte = m.payload[i];
         for (let j = 0; j < 8; j++) {
-          if (byte % 2) queue.queue(i * 8 + 7 - j);
+          if (m.payload[i] % 2) queue.queue(i * 8 + 7 - j);
           byte = Math.floor(byte / 2);
         }
-      });
+      }
       if (queueEmpty) requestPiece(socket, pieces, queue);
     }
     if (m.id === 7)
@@ -72,16 +79,7 @@ function handle_msg(msg, socket, pieces, queue, torrent, file) {
   }
 }
 
-function handleBitfield(socket, pieces, queue, payload) {
-  const queueEmpty = queue.length === 0;
-  payload.forEach((byte, i) => {
-    for (let j = 0; j < 8; j++) {
-      if (byte % 2) queue.queue(i * 8 + 7 - j);
-      byte = Math.floor(byte / 2);
-    }
-  });
-  if (queueEmpty) requestPiece(socket, pieces, queue);
-}
+
 
 function handlePiece(socket, pieces, queue, torrent, file, pieceResp) {
   pieces.printPercentDone();
@@ -90,14 +88,14 @@ function handlePiece(socket, pieces, queue, torrent, file, pieceResp) {
 
   const offset =
     pieceResp.index * torrent.info["piece length"] + pieceResp.begin;
-  fs.write(file, pieceResp.block, 0, pieceResp.block.length, offset, () => {});
+  fs.write(file, pieceResp.block, 0, pieceResp.block.length, offset, () => { });
 
   if (pieces.isDone()) {
     console.log("DONE!");
     socket.end();
     try {
       fs.closeSync(file);
-    } catch (e) {}
+    } catch (e) { }
   } else {
     requestPiece(socket, pieces, queue);
   }
