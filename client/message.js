@@ -1,6 +1,6 @@
 const Buffer = require("buffer").Buffer;
-const parser = require("./torrent_utils");
-const torrentUtil = require("./util");
+const torrentParser = require("./torrent_utils");
+const util = require("./util");
 
 const HANDSHAKE_BUFFER_LEN = 68;
 const CHOKE_BUFFER_LEN = 5;
@@ -49,7 +49,7 @@ function buildUnchoke() {
 }
 
 function buildInterested() {
-  const buf = Buffer.alloc(INTERESTED_BUFFER_LEND);
+  const buf = Buffer.alloc(INTERESTED_BUFFER_LEN);
   // length
   buf.writeUInt32BE(1, 0);
   // id
@@ -163,9 +163,9 @@ function parse(message) {
     payload = message.slice(5);
   }
 
-  if (id in [6, 7, 8]) {
+  if ([6, 7, 8].includes(id)) {
     const det = payload.slice(8);
-    const payload = _buildParserPayload(payload);
+    payload = _buildParserPayload(payload);
     if (id === 7) payload["block"] = det;
     else payload["length"] = det;
   }
@@ -177,3 +177,18 @@ function parse(message) {
     payload,
   };
 }
+
+module.exports = {
+  parse,
+  buildHandshake,
+  buildBitfield,
+  buildCancel,
+  buildChoke,
+  buildUnchoke,
+  buildUninterested,
+  buildPort,
+  buildRequest,
+  buildPiece,
+  buildKeepAlive,
+  buildInterested,
+};
