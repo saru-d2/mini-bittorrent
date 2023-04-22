@@ -1,4 +1,4 @@
-const parser = require("./torrent-parser");
+const parser = require("./torrent_utils");
 
 class Queue {
   constructor(torrent) {

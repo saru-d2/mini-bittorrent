@@ -1,5 +1,5 @@
 const Buffer = require("buffer").Buffer;
-const parser = require("./torrent-parser");
+const parser = require("./torrent_utils");
 const torrentUtil = require("./util");
 
 const HANDSHAKE_BUFFER_LEN = 68;

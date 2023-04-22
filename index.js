@@ -1,14 +1,10 @@
-import bencode from "bencode";
+"use strict";
 
-var data = {
-  string: "Hello World",
-  integer: 12345,
-  dict: {
-    key: "This is a string within a dictionary",
-  },
-  list: [1, 2, 3, 4, "string", 5, {}],
-};
+const download = require("./client/download");
+const torrentParser = require("./client/torrent_utils");
 
-var result = bencode.encode(data);
+const torrent = torrentParser.open(process.argv[2]);
 
-console.log(result);
+console.log(torrent);
+
+download(torrent, torrent.info.name);
