@@ -32,7 +32,7 @@ module.exports.getPeers = (torrent, callback) => {
     assoc[ret.tid.readInt32BE()] = urlCorrected.toString("utf-8");
     try {
       udpSend(socket, ret.buf, urlCorrected.toString("utf-8"));
-    } catch {}
+    } catch { }
   }
 
   // udpSend(socket, buildConnReq(), url);
@@ -40,7 +40,11 @@ module.exports.getPeers = (torrent, callback) => {
 
   socket.on("message", (response) => {
     if (respType(response) === "connect") {
-      const connResp = parseConnResp(response);
+      const connResp = {
+        action: response.readUInt32BE(0),
+        transactionId: response.readUInt32BE(4),
+        connectionId: response.slice(8),
+      };
       const announceReq = buildAnnounceReq(connResp.connectionId, torrent);
       if (assoc[connResp.transactionId]) {
         // console.log(announceReq, assoc[connResp.transactionId])
@@ -54,29 +58,24 @@ module.exports.getPeers = (torrent, callback) => {
   });
 };
 
-function udpSend(socket, message, rawUrl, callback = () => {}) {
-  const url = urlParse(rawUrl);
-  socket.send(message, 0, message.length, url.port, url.hostname, callback);
+function udpSend(socket, message, rawUrl, callback = () => { }) {
+  socket.send(message, 0, message.length, urlParse(rawUrl).port, urlParse(rawUrl).hostname, callback);
 }
 
-function respType(resp) {
-  const action = resp.readUInt32BE(0);
-  if (action === 0) return "connect";
-  if (action === 1) return "announce";
+respType = (resp) => {
+  return resp.readUInt32BE(0) == 0 ? "connect" : "announce";
 }
 
-function buildConnReq() {
+
+buildConnReq = () => {
   const buf = Buffer.allocUnsafe(16);
 
-  // connection id
   buf.writeUInt32BE(0x417, 0);
   buf.writeUInt32BE(0x27101980, 4);
 
-  // action
   buf.writeUInt32BE(0, 8);
 
-  // transaction id
-  var tid = crypto.randomBytes(4);
+  let tid = crypto.randomBytes(4);
   tid.copy(buf, 12);
 
   return {
@@ -85,13 +84,6 @@ function buildConnReq() {
   };
 }
 
-function parseConnResp(resp) {
-  return {
-    action: resp.readUInt32BE(0),
-    transactionId: resp.readUInt32BE(4),
-    connectionId: resp.slice(8),
-  };
-}
 
 function buildAnnounceReq(connId, torrent, port = 6881) {
   const buf = Buffer.allocUnsafe(98);
@@ -116,23 +108,32 @@ function buildAnnounceReq(connId, torrent, port = 6881) {
 
 function parseAnnounceResp(resp) {
   function group(iterable, groupSize) {
+    let i = 0;
     let groups = [];
-    for (let i = 0; i < iterable.length; i += groupSize) {
-      groups.push(iterable.slice(i, i + groupSize));
-    }
+    iterable.forEach((_, index) => {
+      if (index % groupSize === 0) {
+        groups.push(iterable.slice(i, i + groupSize));
+        i = index;
+      }
+    });
     return groups;
   }
 
+  const addresses = group(resp.slice(20), 6);
+  const results = [];
+  for (let i = 0; i < addresses.length; i++) {
+    const address = addresses[i];
+    results.push({
+      ip: address.slice(0, 4).join("."),
+      port: address.readUInt16BE(4),
+    });
+  }
+
   return {
-    action: resp.readUInt32BE(0),
     transactionId: resp.readUInt32BE(4),
+    action: resp.readUInt32BE(0),
     leechers: resp.readUInt32BE(8),
     seeders: resp.readUInt32BE(12),
-    peers: group(resp.slice(20), 6).map((address) => {
-      return {
-        ip: address.slice(0, 4).join("."),
-        port: address.readUInt16BE(4),
-      };
-    }),
+    peers: results
   };
 }
