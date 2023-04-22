@@ -7,13 +7,7 @@ const torrent_utils = require('./torrent_utils');
 const Pieces = require('./Pieces');
 const Queue = require('./Queue');
 
-module.exports = (torrent, path) => {
-    tracker.getPeers(torrent, peers => {
-        const pieces = new Pieces(torrent);
-        const file = fs.openSync(path, 'w');
-        peers.forEach(peer => download(peer, torrent, pieces, file));
-    });
-};
+
 
 function download(peer, torrent, pieces, file) {
     const socket = new net.Socket();
@@ -60,7 +54,17 @@ function handle_msg(msg, socket, pieces, queue, torrent, file) {
             queue.queue(pieceIndex);
             if (queueEmpty) requestPiece(socket, pieces, queue);
         }
-        if (m.id === 5) handleBitfield(socket, pieces, queue, m.payload);
+        // if (m.id === 5) handleBitfield(socket, pieces, queue, m.payload);
+        if (m.id === 5) {
+            const queueEmpty = queue.length === 0;
+            m.payload.forEach((byte, i) => {
+                for (let j = 0; j < 8; j++) {
+                    if (byte % 2) queue.queue(i * 8 + 7 - j);
+                    byte = Math.floor(byte / 2);
+                }
+            });
+            if (queueEmpty) requestPiece(socket, pieces, queue);
+        }
         if (m.id === 7) handlePiece(socket, pieces, queue, torrent, file, m.payload);
     }
 }
@@ -101,7 +105,7 @@ function requestPiece(socket, pieces, queue) {
             if (pieces.needed(pieceBlock)) {
                 socket.write(message.buildRequest(pieceBlock));
                 pieces.addRequested(pieceBlock);
-                
+
                 break;
             }
         }
@@ -109,3 +113,11 @@ function requestPiece(socket, pieces, queue) {
     else
         return null;
 }
+
+module.exports = (torrent, path) => {
+    tracker.getPeers(torrent, peers => {
+        const pieces = new Pieces(torrent);
+        const file = fs.openSync(path, 'w');
+        peers.forEach(peer => download(peer, torrent, pieces, file));
+    });
+};
